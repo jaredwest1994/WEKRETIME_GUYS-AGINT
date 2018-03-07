@@ -13,6 +13,15 @@
 #define SYSCLK 72000000L
 #define BAUDRATE 115200L
 
+#define LCD_RS P2_6
+// #define LCD_RW Px_x // Not used in this code.  Connect to GND
+#define LCD_E  P2_5
+#define LCD_D4 P2_4
+#define LCD_D5 P2_3
+#define LCD_D6 P2_2
+#define LCD_D7 P2_1
+#define CHARS_PER_LINE 16
+
 char _c51_external_startup (void)
 {
 	// Disable Watchdog with key sequence
@@ -123,6 +132,94 @@ void waitms (unsigned int ms)
 
 #define VDD 3.309 // The measured value of VDD in volts
 
+void LCD_pulse (void)
+{
+	LCD_E=1;
+	Timer3us(40);
+	LCD_E=0;
+}
+
+void LCD_byte (unsigned char x)
+{
+	// The accumulator in the C8051Fxxx is bit addressable!
+	ACC=x; //Send high nible
+	LCD_D7=ACC_7;
+	LCD_D6=ACC_6;
+	LCD_D5=ACC_5;
+	LCD_D4=ACC_4;
+	LCD_pulse();
+	Timer3us(40);
+	ACC=x; //Send low nible
+	LCD_D7=ACC_3;
+	LCD_D6=ACC_2;
+	LCD_D5=ACC_1;
+	LCD_D4=ACC_0;
+	LCD_pulse();
+}
+
+void WriteData (unsigned char x)
+{
+	LCD_RS=1;
+	LCD_byte(x);
+	waitms(2);
+}
+
+void WriteCommand (unsigned char x)
+{
+	LCD_RS=0;
+	LCD_byte(x);
+	waitms(5);
+}
+
+void LCD_4BIT (void)
+{
+	LCD_E=0; // Resting state of LCD's enable is zero
+	// LCD_RW=0; // We are only writing to the LCD in this program
+	waitms(20);
+	// First make sure the LCD is in 8-bit mode and then change to 4-bit mode
+	WriteCommand(0x33);
+	WriteCommand(0x33);
+	WriteCommand(0x32); // Change to 4-bit mode
+
+	// Configure the LCD
+	WriteCommand(0x28);
+	WriteCommand(0x0c);
+	WriteCommand(0x01); // Clear screen command (takes some time)
+	waitms(20); // Wait for clear screen command to finsih.
+}
+
+void LCDprint(char * string, unsigned char line, bit clear)
+{
+	int j;
+
+	WriteCommand(line==2?0xc0:0x80);
+	waitms(5);
+	for(j=0; string[j]!=0; j++)	WriteData(string[j]);// Write the message
+	if(clear) for(; j<CHARS_PER_LINE; j++) WriteData(' '); // Clear the rest of the line
+}
+
+int getsn (char * buff, int len)
+{
+	int j;
+	char c;
+	
+	for(j=0; j<(len-1); j++)
+	{
+		c=getchar();
+		if ( (c=='\n') || (c=='\r') )
+		{
+			buff[j]=0;
+			return j;
+		}
+		else
+		{
+			buff[j]=c;
+		}
+	}
+	buff[j]=0;
+	return len;
+}
+
 void InitPinADC (unsigned char portno, unsigned char pinno)
 {
 	unsigned char mask;
@@ -189,39 +286,72 @@ float Period_at_Pin(unsigned char pin)
 */
 unsigned int Get_ADC (void)
 {
-ADBUSY = 1;
-while (ADBUSY); // Wait for conversion to complete
-return ( ADC0L + ( ADC0H * 0x100 ) );
+	ADBUSY = 1;
+	while (ADBUSY); // Wait for conversion to complete
+	return ( ADC0L + ( ADC0H * 0x100 ) );
 }
 
-float Period_at_Pin(unsigned char pin)
+float Period_at_Pin(unsigned char pin, int x)
 {
 	float half_period = 0;
+	float quart_period = 0;
+	float peak_volt[2];
 	float overflow_count = 0;
 	float period = 0;
+	
+	char volt_buffer[16];
+	LCD_4BIT ();
 	
 // Start tracking the reference signal
 	ADC0MX=pin;
 	ADBUSY=1;
 	while (ADBUSY); // Wait for conversion to complete
 	// Reset the timer
+	TMOD &= 0B_1111_0000;
+	TMOD |= 0B_0000_0001;
 	TL0=0;
 	TH0=0;
-	while (Get_ADC()!=0); // Wait for the signal to be zero
+	while (Volts_at_Pin(pin)!=0); // Wait for the signal to be zero
 
-	while (Get_ADC()==0); // Wait for the signal to be positive
+	while (Volts_at_Pin(pin)==0); // Wait for the signal to be positive
 	P1_5=1;
 	TR0=1; // Start the timer 0
-	while (Get_ADC()!=0); // Wait for the signal to be zero again
+	while (Volts_at_Pin(pin)!=0); // Wait for the signal to be zero again
 	P1_5=0;
 	TR0=0; // Stop timer 0
-	half_period=TH0*256.0+TL0; // The 16-bit number [TH0-TL0]
-	return period = 1000.0*(half_period*(12.0/(float)SYSCLK))*2.0;
+	half_period=(float)(TH0*256.0+TL0); // The 16-bit number [TH0-TL0]
+	period = 1000.0*(half_period*(12.0/(float)SYSCLK))*2.0;
 //	return half_period=1000.0*half_period*(12.0/(float)SYSCLK);
 	// Time from the beginning of the sine wave to its peak
-//	overflow_count=65536-(half_period*2);
-//	period = 1000*(2.0*(float)overflow_count*(12.0/(float)SYSCLK));
-//	return period;
+	//overflow_count=65536-(half_period*2);
+	//period = 1000*(2.0*(float)overflow_count*(12.0/(float)SYSCLK));
+	quart_period = period/4.0;
+	
+	
+	ADC0MX=pin;
+	ADBUSY=1;
+	while (ADBUSY); // Wait for conversion to complete
+	// Reset the timer
+	TMOD &= 0B_1111_0000;
+	TMOD |= 0B_0000_0001;
+	TL0=0;
+	TH0=0;
+	while (Volts_at_Pin(pin)!=0); // Wait for the signal to be zero
+
+	while (Volts_at_Pin(pin)==0); // Wait for the signal to be positive
+	TR0=1; // Start the timer 0
+	while (Volts_at_Pin(pin)!=0) // Wait for the signal to be zero again
+	{
+		if((float)(TH0*256.0+TL0) == quart_period)
+		{
+			peak_volt[x]= Volts_at_Pin(pin);
+			sprintf(volt_buffer, "V: %f V", peak_volt[x]);
+			LCDprint(volt_buffer, 1, 1);
+		}
+	}
+	TR0=0; // Stop timer 0
+	
+	return period;
 }
 /*
 float Peak_Voltage(unsigned char pin, float period)
@@ -245,7 +375,14 @@ float Peak_Voltage(unsigned char pin, float period)
 
 void main (void)
 {
+	float v[2];
 	float Period[2];
+	int per1 = 1;
+	int per0 = 0;
+	float quarter_period = 0;
+
+	char buffer[17];
+	LCD_4BIT ();
 
     waitms(500); // Give PuTTy a chance to start before sending
 	printf("\x1b[2J"); // Clear screen using ANSI escape sequence.
@@ -259,13 +396,21 @@ void main (void)
 	InitPinADC(1, 6); // Configure P1.6 as analog input
 
     InitADC();
-
+	
 	while(1)
 	{
+		v[0] = Volts_at_Pin(QFP32_MUX_P1_7);
+		
 	    // Read 14-bit value from the pins configured as analog inputs
-		Period[0] = Period_at_Pin(QFP32_MUX_P1_7);
+		Period[0] = Period_at_Pin(QFP32_MUX_P1_7, per0);
+		quarter_period = (Period[0])/4.0;
 	//	Period[1] = Period_at_Pin(QFP32_MUX_P1_6);
-		printf ("Period@1.7 = %8.2fms, Period@1.6 = %7.2ms\r", Period[0]);
+		printf ("Period@1.7 = %fms, Period@1.6 = %fms\r", Period[0], quarter_period);
+		
+		
+		sprintf(buffer, "Perd: %.3f ms", Period[0]);
+		LCDprint(buffer, 2, 1);
+		
 		waitms(500);
 	 }  
 }	
