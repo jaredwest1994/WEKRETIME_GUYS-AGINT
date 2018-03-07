@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <EFM8LB1.h>
+#include <math.h>
 
 // ~C51~  
 
@@ -103,13 +104,13 @@ void InitADC (void)
 }
 
 // Uses Timer3 to delay <us> micro-seconds. 
-void Timer3us(unsigned char us)
+void Timer3us(unsigned int us)
 {
-	unsigned char i;               // usec counter
+	unsigned int i;               // usec counter
 	
 	// The input for Timer 3 is selected as SYSCLK by setting T3ML (bit 6) of CKCON0:
 	CKCON0|=0b_0100_0000;
-	
+
 	TMR3RL = (-(SYSCLK)/1000000L); // Set Timer3 to overflow in 1us.
 	TMR3 = TMR3RL;                 // Initialize Timer3 for first overflow
 	
@@ -266,122 +267,115 @@ float Volts_at_Pin(unsigned char pin)
 	 return ((ADC_at_Pin(pin)*VDD)/16383.0);
 }
 
-//Measure Period at PX_x
-/*
-float Period_at_Pin(unsigned char pin)
-{
-	unsigned int Period=0;
-	TR0=0; // Stop timer 0
-	TMOD &= 0b_1111_0000;
-	TMOD |= 0b_0000_0001;
-	TH0=0; TL0=0; // Reset the timer
-	while ((float)(ADC_at_Pin(pin)/16383.0)!=0.0);// Wait for the signal to be zero
-	while ((ADC_at_Pin(pin)/16383.0)==0); // Wait for the signal to be one
-	TR0=1; // Start timing
-	while ((ADC_at_Pin(pin)/16383.0)==1); // Wait for the signal to be zero
-	TR0=0; // Stop timer 0
-	// [TH0,TL0] is half the period in multiples of 12/CLK, so:
-	return Period =(TH0*256.0+TL0)*2; // Assume Period is unsigned int
-}
-*/
-unsigned int Get_ADC (void)
-{
-	ADBUSY = 1;
-	while (ADBUSY); // Wait for conversion to complete
-	return ( ADC0L + ( ADC0H * 0x100 ) );
-}
-
-float Period_at_Pin(unsigned char pin, int x)
+/********************************************
+*											*
+* 	Runs Timer0 To Calculate Half Period	*
+*		in Units of 12/SYSCLK				*
+*											*
+********************************************/
+float CALC_Half_Period(unsigned char pin)
 {
 	float half_period = 0;
-	float quart_period = 0;
-	float peak_volt[2];
-	float overflow_count = 0;
-	float period = 0;
-	
-	char volt_buffer[16];
-	LCD_4BIT ();
-	
+
 // Start tracking the reference signal
 	ADC0MX=pin;
 	ADBUSY=1;
 	while (ADBUSY); // Wait for conversion to complete
-	// Reset the timer
+//set timer 0 as a 16 bit timer
 	TMOD &= 0B_1111_0000;
 	TMOD |= 0B_0000_0001;
-	TL0=0;
-	TH0=0;
+//Reset the timer
+	TL0=0; TH0=0;
 	while (Volts_at_Pin(pin)!=0); // Wait for the signal to be zero
-
 	while (Volts_at_Pin(pin)==0); // Wait for the signal to be positive
-	P1_5=1;
 	TR0=1; // Start the timer 0
 	while (Volts_at_Pin(pin)!=0); // Wait for the signal to be zero again
-	P1_5=0;
 	TR0=0; // Stop timer 0
-	half_period=(float)(TH0*256.0+TL0); // The 16-bit number [TH0-TL0]
-	period = 1000.0*(half_period*(12.0/(float)SYSCLK))*2.0;
-//	return half_period=1000.0*half_period*(12.0/(float)SYSCLK);
-	// Time from the beginning of the sine wave to its peak
-	//overflow_count=65536-(half_period*2);
-	//period = 1000*(2.0*(float)overflow_count*(12.0/(float)SYSCLK));
-	quart_period = period/4.0;
-	
-	
-	ADC0MX=pin;
-	ADBUSY=1;
-	while (ADBUSY); // Wait for conversion to complete
-	// Reset the timer
-	TMOD &= 0B_1111_0000;
-	TMOD |= 0B_0000_0001;
-	TL0=0;
-	TH0=0;
-	while (Volts_at_Pin(pin)!=0); // Wait for the signal to be zero
+	return half_period=(float)(TH0*256.0+TL0); // The 16-bit number [TH0-TL0]
+}
 
-	while (Volts_at_Pin(pin)==0); // Wait for the signal to be positive
-	TR0=1; // Start the timer 0
-	while (Volts_at_Pin(pin)!=0) // Wait for the signal to be zero again
-	{
-		if((float)(TH0*256.0+TL0) == quart_period)
-		{
-			peak_volt[x]= Volts_at_Pin(pin);
-			sprintf(volt_buffer, "V: %f V", peak_volt[x]);
-			LCDprint(volt_buffer, 1, 1);
-		}
-	}
-	TR0=0; // Stop timer 0
-	
-	return period;
-}
-/*
-float Peak_Voltage(unsigned char pin, float period)
+
+/************************************************
+*												*
+*	Returns the Period as measured at PX_X		*
+*												*
+************************************************/
+float Period_at_Pin(unsigned char pin)
 {
-	int quarter_period=period/4;
+ return 1000.0*(CALC_Half_Period(pin)*(12.0/(float)SYSCLK))*2.0;
+}
+
+/********************************************
+*											*
+* Measures the Quarter Period of the Wave   *
+*	will be used to calculate peak voltage	*
+*											*
+********************************************/
+float Quart_Period(unsigned char pin)
+{
+ return CALC_Half_Period(pin)/2;
+}
+
+/****************************************************
+*													*
+*	Calculates the Peak Voltage of the Sine Wave	*
+*													*
+****************************************************/
+float Calc_Peak_Voltage(unsigned char pin)
+{
+
+	float voltage=0;
+	float quarter_period = Period_at_Pin(pin)*1000/4;
+
+//Set ADC to Read the correct pin
 	ADC0MX=pin;
 	ADBUSY=1;
-	while(ADBUSY);
-	TL2=0;
-	TH2=0;
-	while(Get_ADC()!=0);
-	while(Get_ADC()==0);
-	TR2=1;
-	if((TH2*256.0+TL2)==quarter_period)
-	{
-		TR2=0;
-		return Volts_at_Pin(pin);
-	}
+	while (ADBUSY);//wait for the conversion to complete
+	while (Volts_at_Pin(pin)!=0); // Wait for the signal to be zero
+	while (Volts_at_Pin(pin)==0); // Wait for the signal to be positive
+//delay by quarter_period before measuring the voltage
+	Timer3us(quarter_period);
+	voltage = Volts_at_Pin(pin);
+	return voltage;	
 }
-*/
+
+float Phase_Difference(unsigned char pin1, unsigned char pin2, float period)
+{
+	float time_between=0;
+	ADBUSY=1;
+	while (ADBUSY);//wait for the conversion to complete
+	TR0=0;
+	TL0=0;TH0=0;
+	while(Volts_at_Pin(pin1)!=0 && Volts_at_Pin(pin2) !=0);
+		if(Volts_at_Pin(pin1)==0){
+			while(Volts_at_Pin(pin1)==0);
+			TR0=1;
+			P1_5=1;
+			while(Volts_at_Pin(pin2)==0);
+			TR0=0;
+			P1_5=0;
+		}
+		else{
+			while(Volts_at_Pin(pin2)==0);
+			TR0=1;
+			P1_5=1;
+			while(Volts_at_Pin(pin1)==0);
+			TR0=0;
+			P1_5=0;
+		}
+	time_between=(TH0*256.0+TL0)*(12.0/(float)SYSCLK);
+	return time_between*1000*(360.0/period);
+}
 
 void main (void)
 {
 	float v[2];
+	float vrms[2];
 	float Period[2];
-	int per1 = 1;
-	int per0 = 0;
 	float quarter_period = 0;
-
-	char buffer[17];
+	float phase_diff = 0;
+	float frequency = 0;
+	
 	LCD_4BIT ();
 
     waitms(500); // Give PuTTy a chance to start before sending
@@ -399,18 +393,16 @@ void main (void)
 	
 	while(1)
 	{
-		v[0] = Volts_at_Pin(QFP32_MUX_P1_7);
-		
 	    // Read 14-bit value from the pins configured as analog inputs
-		Period[0] = Period_at_Pin(QFP32_MUX_P1_7, per0);
-		quarter_period = (Period[0])/4.0;
-	//	Period[1] = Period_at_Pin(QFP32_MUX_P1_6);
-		printf ("Period@1.7 = %fms, Period@1.6 = %fms\r", Period[0], quarter_period);
-		
-		
-		sprintf(buffer, "Perd: %.3f ms", Period[0]);
-		LCDprint(buffer, 2, 1);
-		
+		Period[0] = Period_at_Pin(QFP32_MUX_P1_7);
+		Period[1] = Period_at_Pin(QFP32_MUX_P1_6);
+		v[0] = Calc_Peak_Voltage(QFP32_MUX_P1_7);
+		v[1] = Calc_Peak_Voltage(QFP32_MUX_P1_6);
+		vrms[0] = v[0]/1.414214;
+		vrms[1] = v[1]/1.414214;
+		phase_diff = Phase_Difference(QFP32_MUX_P1_7, QFP32_MUX_P1_6, Period[0]);
+		frequency = 1.0/(Period[0]/1000.0);
+		printf ("f@1.7=%.2fHz, V@1.7=%.4fVrms, V@1.6=%.4fVrms, diff=%.4fdegrees\r", frequency,vrms[0],vrms[1], phase_diff);
 		waitms(500);
 	 }  
-}	
+}
