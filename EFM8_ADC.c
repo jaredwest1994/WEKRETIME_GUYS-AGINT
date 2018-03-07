@@ -153,6 +153,7 @@ void InitPinADC (unsigned char portno, unsigned char pinno)
 	SFRPAGE = 0x00;
 }
 
+
 unsigned int ADC_at_Pin(unsigned char pin)
 {
 	ADC0MX = pin;   // Select input from pin
@@ -167,29 +168,80 @@ float Volts_at_Pin(unsigned char pin)
 {
 	 return ((ADC_at_Pin(pin)*VDD)/16383.0);
 }
-//Measure Half Period at PX_x
 
-int Period_at_Pin(unsigned char pin)
+//Measure Period at PX_x
+/*
+float Period_at_Pin(unsigned char pin)
 {
-	int Period=0;
+	unsigned int Period=0;
 	TR0=0; // Stop timer 0
 	TMOD &= 0b_1111_0000;
 	TMOD |= 0b_0000_0001;
 	TH0=0; TL0=0; // Reset the timer
-	while (ADC_at_Pin(pin)==1); // Wait for the signal to be zero
-	while (ADC_at_Pin(pin)==0); // Wait for the signal to be one
+	while ((float)(ADC_at_Pin(pin)/16383.0)!=0.0);// Wait for the signal to be zero
+	while ((ADC_at_Pin(pin)/16383.0)==0); // Wait for the signal to be one
 	TR0=1; // Start timing
-	while (ADC_at_Pin(pin)==1); // Wait for the signal to be zero
+	while ((ADC_at_Pin(pin)/16383.0)==1); // Wait for the signal to be zero
 	TR0=0; // Stop timer 0
 	// [TH0,TL0] is half the period in multiples of 12/CLK, so:
-	Period=(TH0*0x100+TL0)*2; // Assume Period is unsigned int
-	return Period;
+	return Period =(TH0*256.0+TL0)*2; // Assume Period is unsigned int
 }
+*/
+unsigned int Get_ADC (void)
+{
+ADBUSY = 1;
+while (ADBUSY); // Wait for conversion to complete
+return ( ADC0L + ( ADC0H * 0x100 ) );
+}
+
+float Period_at_Pin(unsigned char pin)
+{
+	float half_period = 0;
+	float overflow_count = 0;
+	float period = 0;
+	
+// Start tracking the reference signal
+	ADC0MX=pin;
+	ADBUSY=1;
+	while (ADBUSY); // Wait for conversion to complete
+	// Reset the timer
+	TL0=0;
+	TH0=0;
+	while (Get_ADC()!=0); // Wait for the signal to be zero
+	while (Get_ADC()==0); // Wait for the signal to be positive
+	TR0=1; // Start the timer 0
+	while (Get_ADC()!=0); // Wait for the signal to be zero again
+	TR0=0; // Stop timer 0
+	half_period=TH0*256.0+TL0; // The 16-bit number [TH0-TL0]
+	// Time from the beginning of the sine wave to its peak
+	//period = 1000.0*(half_period*(12.0/(float)SYSCLK))*2.0;
+	overflow_count=65536-(half_period*2);
+	period = 1000*(2.0*(float)overflow_count*(12.0/(float)SYSCLK));
+	return period;
+}
+/*
+float Peak_Voltage(unsigned char pin, float period)
+{
+	int quarter_period=period/4;
+	ADC0MX=pin;
+	ADBUSY=1;
+	while(ADBUSY);
+	TL2=0;
+	TH2=0;
+	while(Get_ADC()!=0);
+	while(Get_ADC()==0);
+	TR2=1;
+	if((TH2*256.0+TL2)==quarter_period)
+	{
+		TR2=0;
+		return Volts_at_Pin(pin);
+	}
+}
+*/
 
 void main (void)
 {
-	float v[2];
-	float period[2];
+	float Period[2];
 
     waitms(500); // Give PuTTy a chance to start before sending
 	printf("\x1b[2J"); // Clear screen using ANSI escape sequence.
@@ -207,13 +259,9 @@ void main (void)
 	while(1)
 	{
 	    // Read 14-bit value from the pins configured as analog inputs
-		v[0] = Volts_at_Pin(QFP32_MUX_P1_7);
-		v[1] = Volts_at_Pin(QFP32_MUX_P1_6);
-		
-		period[0] = Period_at_Pin(QFP32_MUX_P1_7);
-		period[1] = Period_at_Pin(QFP32_MUX_P1_6);
-		
-		printf ("V@P1.7=%7.5fV, V@P1.6=%7.5fV, Period@P1.7=%7.2fHz, Period@P1.6=%7.2fHz\r", v[0], v[1], period[0], period[1]);
+		Period[0] = Period_at_Pin(QFP32_MUX_P1_7);
+		Period[1] = Period_at_Pin(QFP32_MUX_P1_6);
+		printf ("Period@1.7 = %8.2fms, Period@1.6 = %7.2fms\r", Period[0], Period[1]);
 		waitms(500);
 	 }  
 }	
