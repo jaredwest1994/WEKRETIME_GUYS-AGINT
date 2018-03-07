@@ -208,16 +208,20 @@ float Period_at_Pin(unsigned char pin)
 	TL0=0;
 	TH0=0;
 	while (Get_ADC()!=0); // Wait for the signal to be zero
+
 	while (Get_ADC()==0); // Wait for the signal to be positive
+	P1_5=1;
 	TR0=1; // Start the timer 0
 	while (Get_ADC()!=0); // Wait for the signal to be zero again
+	P1_5=0;
 	TR0=0; // Stop timer 0
 	half_period=TH0*256.0+TL0; // The 16-bit number [TH0-TL0]
+	return period = 1000.0*(half_period*(12.0/(float)SYSCLK))*2.0;
+//	return half_period=1000.0*half_period*(12.0/(float)SYSCLK);
 	// Time from the beginning of the sine wave to its peak
-	//period = 1000.0*(half_period*(12.0/(float)SYSCLK))*2.0;
-	overflow_count=65536-(half_period*2);
-	period = 1000*(2.0*(float)overflow_count*(12.0/(float)SYSCLK));
-	return period;
+//	overflow_count=65536-(half_period*2);
+//	period = 1000*(2.0*(float)overflow_count*(12.0/(float)SYSCLK));
+//	return period;
 }
 /*
 float Peak_Voltage(unsigned char pin, float period)
@@ -260,8 +264,8 @@ void main (void)
 	{
 	    // Read 14-bit value from the pins configured as analog inputs
 		Period[0] = Period_at_Pin(QFP32_MUX_P1_7);
-		Period[1] = Period_at_Pin(QFP32_MUX_P1_6);
-		printf ("Period@1.7 = %8.2fms, Period@1.6 = %7.2fms\r", Period[0], Period[1]);
+	//	Period[1] = Period_at_Pin(QFP32_MUX_P1_6);
+		printf ("Period@1.7 = %8.2fms, Period@1.6 = %7.2ms\r", Period[0]);
 		waitms(500);
 	 }  
 }	
