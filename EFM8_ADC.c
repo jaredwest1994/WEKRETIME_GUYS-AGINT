@@ -276,7 +276,7 @@ float Volts_at_Pin(unsigned char pin)
 float CALC_Half_Period(unsigned char pin)
 {
 	float half_period = 0;
-
+	
 // Start tracking the reference signal
 	ADC0MX=pin;
 	ADBUSY=1;
@@ -354,6 +354,8 @@ float Phase_Difference(unsigned char pin1, unsigned char pin2, float period)
 			while(Volts_at_Pin(pin2)==0);
 			TR0=0;
 			P1_5=0;
+			time_between=(TH0*256.0+TL0)*(12.0/(float)SYSCLK);
+			return time_between*1000*(360.0/period);
 		}
 		else{
 			while(Volts_at_Pin(pin2)==0);
@@ -362,9 +364,11 @@ float Phase_Difference(unsigned char pin1, unsigned char pin2, float period)
 			while(Volts_at_Pin(pin1)==0);
 			TR0=0;
 			P1_5=0;
+			time_between=(TH0*256.0+TL0)*(12.0/(float)SYSCLK);
+			return time_between*1000*(360.0/period)*(-1.0);
 		}
-	time_between=(TH0*256.0+TL0)*(12.0/(float)SYSCLK);
-	return time_between*1000*(360.0/period);
+//	time_between=(TH0*256.0+TL0)*(12.0/(float)SYSCLK);
+//	return time_between*1000*(360.0/period);
 }
 
 void main (void)
@@ -375,9 +379,9 @@ void main (void)
 	float quarter_period = 0;
 	float phase_diff = 0;
 	float frequency = 0;
-	
+	char buffer[16];
 	LCD_4BIT ();
-
+	
     waitms(500); // Give PuTTy a chance to start before sending
 	printf("\x1b[2J"); // Clear screen using ANSI escape sequence.
 	
@@ -402,7 +406,11 @@ void main (void)
 		vrms[1] = v[1]/1.414214;
 		phase_diff = Phase_Difference(QFP32_MUX_P1_7, QFP32_MUX_P1_6, Period[0]);
 		frequency = 1.0/(Period[0]/1000.0);
-		printf ("f@1.7=%.2fHz, V@1.7=%.4fVrms, V@1.6=%.4fVrms, diff=%.4fdegrees\r", frequency,vrms[0],vrms[1], phase_diff);
+		sprintf(buffer,"R %.3fVrms  P", vrms[0]);
+		LCDprint(buffer,1,1);
+		sprintf(buffer,"T %.3fVrms %2.1f", vrms[1],phase_diff);
+		LCDprint(buffer,2,1);
+		printf ("f=%.2fHz, V@1.7=%.4fVrms, V@1.6=%.4fVrms, diff=%.4fdegrees\r", frequency,vrms[0],vrms[1], phase_diff);
 		waitms(500);
 	 }  
 }
